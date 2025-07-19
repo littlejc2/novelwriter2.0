@@ -28,7 +28,7 @@
 ### 2. 启动系统
 1. 打开 `index.html`
 2. 点击右上角设置按钮 ⚙️
-3. 输入你的 API Key：`AIzaSyDWTPQGlqz3UeETQN4d4cgo418-sALnHIQ`
+3. 输入你的 API Key
 4. 保存设置
 
 ### 3. 创建项目
