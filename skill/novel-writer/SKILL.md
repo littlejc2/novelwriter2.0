@@ -24,6 +24,7 @@ description: 在本机 localhost 启动「AI小说自动创作系统」网页（
 
 - 网页默认用 Claude。本地运行时由服务器调用 Anthropic API：优先使用启动服务器时的环境变量 `ANTHROPIC_API_KEY`，没有的话用户可以在网页「⚙️ 设置」里填写 Key，并选择 Opus 5.5 / Sonnet 5.5 / Haiku 5.5。
 - 也可以在设置里切换到 Gemini、DeepSeek、MiniMax、智谱 GLM，填各自的 API Key。这些请求都经本地服务器转发，没有浏览器跨域问题。
+- MiniMax Token Plan 订阅 Key（`sk-cp-` 开头）走 Anthropic 兼容接口 `https://api.minimaxi.com/anthropic`，设置里「接口类型」选「自动」或「Token Plan」即可。
 - 不要把用户的 API Key 写进任何文件或对话记录。
 
 ## 小说保存在哪里

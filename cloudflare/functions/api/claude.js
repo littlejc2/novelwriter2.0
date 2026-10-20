@@ -25,7 +25,12 @@ export async function onRequestPost({ request, env }) {
         headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
         payload.fallbacks = 'default';
     }
-    const upstream = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(payload) });
+    let upstream;
+    try {
+        upstream = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(payload) });
+    } catch (e) {
+        return Response.json({ error: { message: `连接 Anthropic 失败：${(e && e.message) || e}` } }, { status: 502 });
+    }
     if (!upstream.ok) {
         const err = await upstream.json().catch(() => ({}));
         return Response.json({ error: { message: (err.error && err.error.message) || `Anthropic API 错误 ${upstream.status}` } }, { status: upstream.status });

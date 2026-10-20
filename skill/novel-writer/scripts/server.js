@@ -20,6 +20,7 @@ const PROXY_HOSTS = new Set([
     'api.deepseek.com',
     'api.minimax.cn',
     'api.minimax.io',
+    'api.minimaxi.com',
     'open.bigmodel.cn'
 ]);
 
@@ -224,10 +225,21 @@ async function handleApi(req, res, url) {
         const target = new URL(String(req.headers['x-target-url'] || ''));
         if (target.protocol !== 'https:' || !PROXY_HOSTS.has(target.hostname)) return send(res, 403, { error: { message: '不允许代理这个地址' } });
         const headers = { 'content-type': 'application/json' };
-        if (req.headers['authorization']) headers['authorization'] = req.headers['authorization'];
-        const upstream = await fetch(target, { method: 'POST', headers, body: await readBody(req) });
-        const text = await upstream.text();
-        return send(res, upstream.status, text, upstream.headers.get('content-type') || 'application/json');
+        for (const h of ['authorization', 'x-api-key', 'anthropic-version', 'accept']) {
+            if (req.headers[h]) headers[h] = req.headers[h];
+        }
+        let upstream;
+        try {
+            upstream = await fetch(target, { method: 'POST', headers, body: await readBody(req) });
+        } catch (e) {
+            return send(res, 502, { error: { message: `连接 ${target.hostname} 失败：${e.message}` } });
+        }
+        // 流式返回边收边转发，长时间生成也不会卡住
+        res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store' });
+        if (upstream.body) {
+            for await (const chunk of upstream.body) res.write(chunk);
+        }
+        return res.end();
     }
 
     return send(res, 404, { error: { message: 'API端点不存在' } });
@@ -250,6 +262,7 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname.startsWith('/api/')) await handleApi(req, res, url);
         else serveStatic(req, res, url);
     } catch (e) {
+        if (res.headersSent) return res.end();
         send(res, e.status || 500, { error: { message: e.message || String(e) } });
     }
 });

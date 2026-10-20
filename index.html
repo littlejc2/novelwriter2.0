@@ -287,7 +287,7 @@
                             <option value="claude">Claude（默认，无需 API Key）</option>
                             <option value="gemini">Google Gemini</option>
                             <option value="deepseek">DeepSeek</option>
-                            <option value="minimax">MiniMax</option>
+                            <option value="minimax">MiniMax（支持 Token Plan）</option>
                             <option value="glm">智谱 GLM</option>
                         </select>
                     </div>
@@ -361,8 +361,17 @@
                     <!-- MiniMax 配置 -->
                     <div id="minimaxConfig" class="api-config" style="display: none;">
                         <div class="form-item">
-                            <label>MiniMax API Key</label>
-                            <input type="password" id="minimaxApiKey" class="input-field" placeholder="输入你的 MiniMax API Key">
+                            <label>接口类型</label>
+                            <select id="minimaxMode" class="input-field" onchange="switchMiniMaxMode()">
+                                <option value="auto">自动（按 Key 判断，sk-cp- 开头为 Token Plan）</option>
+                                <option value="tokenplan">Token Plan 订阅（Anthropic 兼容接口）</option>
+                                <option value="api">按量付费 API（OpenAI 兼容接口）</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label>MiniMax Key</label>
+                            <input type="password" id="minimaxApiKey" class="input-field" placeholder="Token Plan 订阅 Key（sk-cp-…）或按量付费 API Key" oninput="switchMiniMaxMode()">
+                            <small id="minimaxModeHint" style="display: block; margin-top: 6px; color: #666; line-height: 1.6;"></small>
                         </div>
                         <div class="form-item">
                             <label>MiniMax 模型</label>
@@ -371,7 +380,11 @@
                                 <option value="MiniMax-M3.1-Flash">MiniMax-M3.1-Flash - 快速</option>
                             </select>
                         </div>
-                        <div class="form-item">
+                        <div class="form-item" id="minimaxPlanEndpointItem">
+                            <label>Token Plan 接口地址（可选）</label>
+                            <input type="text" id="minimaxPlanEndpoint" class="input-field" value="https://api.minimaxi.com/anthropic" placeholder="https://api.minimaxi.com/anthropic">
+                        </div>
+                        <div class="form-item" id="minimaxEndpointItem">
                             <label>API 端点（可选）</label>
                             <input type="text" id="minimaxEndpoint" class="input-field" value="https://api.minimax.cn/v1" placeholder="国内: https://api.minimax.cn/v1 ／ 海外: https://api.minimax.io/v1">
                         </div>
@@ -575,7 +588,21 @@
             document.getElementById('geminiConfig').style.display = provider === 'gemini' ? 'block' : 'none';
             document.getElementById('deepseekConfig').style.display = provider === 'deepseek' ? 'block' : 'none';
             document.getElementById('minimaxConfig').style.display = provider === 'minimax' ? 'block' : 'none';
+            switchMiniMaxMode();
             document.getElementById('glmConfig').style.display = provider === 'glm' ? 'block' : 'none';
+        }
+
+        // MiniMax：按接口类型显示对应的地址和提示
+        function switchMiniMaxMode() {
+            const modeEl = document.getElementById('minimaxMode');
+            if (!modeEl) return;
+            const key = document.getElementById('minimaxApiKey').value.trim();
+            const plan = modeEl.value === 'tokenplan' || (modeEl.value === 'auto' && (!key || /^sk-cp-/.test(key)));
+            document.getElementById('minimaxPlanEndpointItem').style.display = plan ? 'block' : 'none';
+            document.getElementById('minimaxEndpointItem').style.display = plan ? 'none' : 'block';
+            document.getElementById('minimaxModeHint').textContent = plan
+                ? '当前使用 Token Plan 订阅：填订阅 Key（sk-cp- 开头，在 MiniMax 开放平台「Token Plan」页面获取），走 Anthropic 兼容接口 https://api.minimaxi.com/anthropic，消耗订阅额度。订阅 Key 和按量付费 Key 不通用。'
+                : '当前使用按量付费 API：填普通 API Key，走 OpenAI 兼容接口，按用量扣余额。如果你买的是 Token Plan，请把接口类型选成「Token Plan」。';
         }
 
         // 清除自定义风格
