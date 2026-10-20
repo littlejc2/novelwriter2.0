@@ -1,19 +1,61 @@
 // AI小说自动创作系统 - 自动化工作流
+
+// 本地运行检测：用 skill 的本地服务器打开时，小说存到本地文件，AI 请求经本地服务器转发
+window.NovelLocal = {
+    ok: false,
+    info: null,
+    ready: (async () => {
+        // 本地服务器（skill）或 Cloudflare Pages 部署时，同一网站下有 /api/ping
+        if (!/^https?:$/.test(location.protocol)) return false;
+        try {
+            const r = await fetch('/api/ping', { cache: 'no-store' });
+            if (!r.ok) return false;
+            window.NovelLocal.info = await r.json();
+            window.NovelLocal.ok = !!window.NovelLocal.info.ok;
+        } catch (e) { /* 不是本地服务器 */ }
+        return window.NovelLocal.ok;
+    })()
+};
+
+// 调用外部 AI 接口：本地运行时经本地服务器转发（避免浏览器跨域限制）
+async function netFetch(url, options) {
+    if (await window.NovelLocal.ready) {
+        const headers = Object.assign({}, options.headers, { 'x-target-url': url });
+        return fetch('/api/proxy', Object.assign({}, options, { headers }));
+    }
+    return fetch(url, options);
+}
 class AutoNovelSystem {
     constructor() {
         // 系统配置
         this.config = {
             // API 提供商
-            provider: localStorage.getItem('api_provider') || 'gemini',
+            provider: localStorage.getItem('api_provider') || 'claude',
+            
+            // Claude 配置（通过 claude.ai 页面能力调用，无需 API Key）
+            claudeModelTier: 'default',
+            // 本地运行时直接调用 Anthropic API
+            claudeLocalModel: 'claude-opus-5-5',
+            anthropicApiKey: localStorage.getItem('anthropic_api_key') || '',
             
             // Gemini 配置
             geminiApiKey: localStorage.getItem('gemini_api_key') || '',
-            geminiModel: 'gemini-2.5-pro',
+            geminiModel: 'gemini-3.8-flash',
             
             // DeepSeek 配置
             deepseekApiKey: localStorage.getItem('deepseek_api_key') || '',
-            deepseekModel: 'deepseek-chat',
-            deepseekEndpoint: localStorage.getItem('deepseek_endpoint') || 'https://api.deepseek.com/v1',
+            deepseekModel: 'deepseek-v4-flash',
+            deepseekEndpoint: localStorage.getItem('deepseek_endpoint') || 'https://api.deepseek.com',
+            
+            // MiniMax 配置
+            minimaxApiKey: localStorage.getItem('minimax_api_key') || '',
+            minimaxModel: 'MiniMax-M3',
+            minimaxEndpoint: 'https://api.minimax.cn/v1',
+            
+            // 智谱 GLM 配置
+            glmApiKey: localStorage.getItem('glm_api_key') || '',
+            glmModel: 'glm-5.3',
+            glmEndpoint: 'https://open.bigmodel.cn/api/paas/v4',
             
             // 通用配置
             temperature: 0.8,
@@ -340,7 +382,7 @@ class AutoNovelSystem {
         
         // 快速操作
         document.getElementById('exportBtn').addEventListener('click', () => this.exportAllChaptersAsMarkdown());
-        document.getElementById('saveBtn').addEventListener('click', () => this.saveProject());
+        document.getElementById('saveBtn').addEventListener('click', () => this.saveProject(true));
         document.getElementById('loadBtn').addEventListener('click', () => this.loadProject());
         
         // 定时器
@@ -350,9 +392,9 @@ class AutoNovelSystem {
     // 开始创作
     async start() {
         // 验证输入
-        const currentApiKey = this.config.provider === 'gemini' ? this.config.geminiApiKey : this.config.deepseekApiKey;
+        const currentApiKey = this.config.provider === 'claude' ? 'claude' : this.config[`${this.config.provider}ApiKey`];
         if (!currentApiKey) {
-            alert(`请先设置 ${this.config.provider === 'gemini' ? 'Gemini' : 'DeepSeek'} API Key`);
+            alert(`请先设置 ${this.providerName()} API Key`);
             this.showSettings();
             return;
         }
@@ -398,13 +440,29 @@ class AutoNovelSystem {
                 this.project.targetChapters = 60; // 长篇设置为60章作为初始目标
                 break;
             case 'infinite':
-                this.project.targetChapters = 999; // 无限续写模式设置为999章
+                {
+                    // 无限续写模式：使用用户设置的目标章数（默认200章）
+                    const customEl = document.getElementById('customChapters');
+                    const n = parseInt(customEl && customEl.value, 10);
+                    this.project.targetChapters = n > 0 ? n : 200;
+                    this.project.customChapters = this.project.targetChapters;
+                }
                 break;
         }
         
         // 更新UI显示
         this.targetChaptersEl.textContent = this.project.targetChapters;
         this.currentChapterEl.textContent = '0';
+        
+        // 已有进度的小说：从最后一章之后继续写
+        if (this.project.chapters.length > 0 || this.project.context.worldview) {
+            if (this.project.chapters.length >= this.project.targetChapters) {
+                alert(`《${this.project.title}》已写完 ${this.project.chapters.length} 章，达到目标章数。\n如需继续，请把篇幅改为「无限续写模式」并调大目标章数。`);
+                return;
+            }
+            this.state.totalTasks = this.workflow.reduce((sum, stage) => sum + stage.tasks.length, 0);
+            return this.resumeWriting();
+        }
         
         // 计算总任务数
         this.state.totalTasks = this.workflow.reduce((sum, stage) => sum + stage.tasks.length, 0);
@@ -594,6 +652,15 @@ class AutoNovelSystem {
     
     // 执行单个任务
     async executeTask(task) {
+        this.state.busy = true;
+        try {
+            return await this.runTask(task);
+        } finally {
+            this.state.busy = false;
+        }
+    }
+    
+    async runTask(task) {
         this.state.currentTask = task;
         this.state.currentRole = task.role;
         this.state.taskStartTime = Date.now();
@@ -971,6 +1038,7 @@ ${this.getProjectContext()}
         if (this.project.chapters[chapterIndex]) {
             this.project.chapters[chapterIndex].content = result;
             this.project.chapters[chapterIndex].revisedAt = new Date().toISOString();
+            if (window.ManuscriptStore) window.ManuscriptStore.saveProgress(this);
             
             // 导出修订后的章节
             if (this.config.autoExportChapter) {
@@ -1109,13 +1177,148 @@ ${this.getProjectContext()}
     
     // 调用AI API
     async callAI(prompt) {
-        if (this.config.provider === 'gemini') {
+        if (this.config.provider === 'claude') {
+            return await this.callClaudeAPI(prompt);
+        } else if (this.config.provider === 'gemini') {
             return await this.callGeminiAPI(prompt);
         } else if (this.config.provider === 'deepseek') {
             return await this.callDeepSeekAPI(prompt);
+        } else if (this.config.provider === 'minimax') {
+            return await this.callOpenAICompatible(prompt, {
+                name: 'MiniMax',
+                endpoint: this.config.minimaxEndpoint,
+                apiKey: this.config.minimaxApiKey,
+                model: this.config.minimaxModel,
+                // 思考内容放到 reasoning_content，正文里不出现 <think>
+                extra: { reasoning_split: true, max_completion_tokens: 65536 }
+            });
+        } else if (this.config.provider === 'glm') {
+            return await this.callOpenAICompatible(prompt, {
+                name: '智谱GLM',
+                endpoint: this.config.glmEndpoint,
+                apiKey: this.config.glmApiKey,
+                model: this.config.glmModel,
+                extra: { max_tokens: 32768 }
+            });
         } else {
             throw new Error(`不支持的API提供商: ${this.config.provider}`);
         }
+    }
+    
+    // Claude 调用（claude.ai 页面 sample 能力，使用查看者自己的 Claude 账号）
+    async callClaudeAPI(prompt) {
+        if (await window.NovelLocal.ready) return await this.callClaudeLocal(prompt);
+        const sample = window.claude ? await window.claude.use('sample') : null;
+        if (!sample) {
+            throw new Error('当前环境无法使用 Claude，请在 claude.ai 中打开本页面、用本地服务器运行，或在设置中切换到其他 API 提供商');
+        }
+        try {
+            const input = `${this.getSystemPrompt()}\n\n---\n\n${prompt}`;
+            const result = await sample(input, {
+                modelTier: this.config.claudeModelTier || 'default',
+                cache: false
+            });
+            if (result.truncated) {
+                this.addLog('system', '⚠️ Claude 回复达到长度上限，内容可能不完整');
+            }
+            return result.text;
+        } catch (e) {
+            if (e && e.code === 'not_granted') {
+                throw new Error('未授权本页面使用 Claude，请在页面权限中允许后重试');
+            }
+            if (e && e.code === 'rate_limited') {
+                throw new Error('Claude 调用过于频繁，请稍后再试或调大任务间隔');
+            }
+            throw new Error((e && e.message) || 'Claude 调用失败');
+        }
+    }
+    
+    // 本地运行：经本地服务器调用 Anthropic API（Key 优先用服务器的环境变量）
+    async callClaudeLocal(prompt) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.config.anthropicApiKey) headers['x-user-api-key'] = this.config.anthropicApiKey;
+        const response = await fetch('/api/claude', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model: this.config.claudeLocalModel || 'claude-opus-5-5',
+                system: this.getSystemPrompt(),
+                prompt
+            })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error?.message || `HTTP error! status: ${response.status}`);
+        }
+        // Cloudflare 部署：服务器原样转发 Anthropic 的流式返回，这里拼出全文
+        const data = (response.headers.get('content-type') || '').includes('text/event-stream')
+            ? await this.readClaudeStream(response)
+            : await response.json();
+        if (data.stop_reason === 'refusal' && !data.text) throw new Error('Claude 拒绝了这次请求，请调整内容后重试');
+        if (data.stop_reason === 'max_tokens') this.addLog('system', '⚠️ Claude 回复达到长度上限，内容可能不完整');
+        if (!data.text) throw new Error('Claude 没有返回内容');
+        return data.text;
+    }
+    
+    async readClaudeStream(response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '', text = '', stopReason = null;
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+                const evt = buf.slice(0, idx);
+                buf = buf.slice(idx + 2);
+                const line = evt.split('\n').find(l => l.startsWith('data:'));
+                if (!line) continue;
+                let d;
+                try { d = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+                if (d.type === 'content_block_delta' && d.delta?.type === 'text_delta') text += d.delta.text;
+                else if (d.type === 'message_delta' && d.delta) stopReason = d.delta.stop_reason || stopReason;
+                else if (d.type === 'error') throw new Error(d.error?.message || 'Claude 流式返回出错');
+            }
+        }
+        return { text, stop_reason: stopReason };
+    }
+    
+    providerName() {
+        return { claude: 'Claude', gemini: 'Google Gemini', deepseek: 'DeepSeek', minimax: 'MiniMax', glm: '智谱GLM' }[this.config.provider] || this.config.provider;
+    }
+    
+    // OpenAI 兼容接口调用（MiniMax、智谱GLM）
+    async callOpenAICompatible(prompt, opts) {
+        if (!opts.apiKey) throw new Error(`请先设置 ${opts.name} API Key`);
+        const requestBody = Object.assign({
+            model: opts.model,
+            messages: [
+                { role: 'system', content: this.getSystemPrompt() },
+                { role: 'user', content: prompt }
+            ],
+            temperature: parseFloat(this.config.temperature)
+        }, opts.extra || {});
+        
+        const response = await netFetch(`${opts.endpoint.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${opts.apiKey}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error?.message || data.base_resp?.status_msg || `HTTP error! status: ${response.status}`);
+        }
+        if (data.base_resp && data.base_resp.status_code) {
+            throw new Error(data.base_resp.status_msg || `${opts.name} 错误码 ${data.base_resp.status_code}`);
+        }
+        const content = data.choices?.[0]?.message?.content;
+        if (!content) throw new Error(`无效的${opts.name} API响应格式`);
+        return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
     }
     
     // Gemini API 调用
@@ -1129,10 +1332,8 @@ ${this.getProjectContext()}
                 }]
             }],
             generationConfig: {
-                temperature: parseFloat(this.config.temperature),
-                maxOutputTokens: parseInt(this.config.maxTokens),
-                topK: 40,
-                topP: 0.95,
+                // 新版 Gemini 的输出上限包含思考过程，需要留足空间
+                maxOutputTokens: 65536
             },
             safetySettings: [
                 {
@@ -1154,7 +1355,7 @@ ${this.getProjectContext()}
             ]
         };
         
-        const response = await fetch(API_URL, {
+        const response = await netFetch(API_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1169,8 +1370,10 @@ ${this.getProjectContext()}
         
         const data = await response.json();
         
-        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-            return data.candidates[0].content.parts[0].text;
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const text = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
+        if (text) {
+            return text;
         } else {
             throw new Error('无效的API响应格式');
         }
@@ -1193,13 +1396,10 @@ ${this.getProjectContext()}
                 }
             ],
             temperature: parseFloat(this.config.temperature),
-            max_tokens: parseInt(this.config.maxTokens),
-            top_p: 0.95,
-            frequency_penalty: 0,
-            presence_penalty: 0
+            max_tokens: 32768
         };
         
-        const response = await fetch(API_URL, {
+        const response = await netFetch(API_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1914,6 +2114,7 @@ ${JSON.stringify(this.project.context.plotStructure || {}, null, 2)}
     async requestReview(task, content, isError = false) {
         return new Promise((resolve) => {
             this.currentReviewResolve = resolve;
+            this.currentReviewText = content;
             
             // 显示审核面板
             this.reviewPanel.style.display = 'block';
@@ -1938,8 +2139,10 @@ ${JSON.stringify(this.project.context.plotStructure || {}, null, 2)}
     handleApprove() {
         if (!this.currentReviewResolve) return;
         
-        this.saveTaskResult(this.state.currentTask, this.reviewContent.textContent);
+        // 保存审核框中当前显示的版本（包含修改建议后的新版本）
+        this.saveTaskResult(this.state.currentTask, this.currentReviewText != null ? this.currentReviewText : this.reviewContent.textContent);
         this.reviewPanel.style.display = 'none';
+        this.modifyInput.style.display = 'none';
         this.state.isPaused = false;
         
         this.addLog('system', '✅ 人工批准');
@@ -1964,15 +2167,24 @@ ${JSON.stringify(this.project.context.plotStructure || {}, null, 2)}
         const newPrompt = `
 之前的输出需要修改。
 
+之前的输出：
+${this.currentReviewText || ''}
+
 人工修改建议：
 ${modification}
 
-请根据修改建议重新执行任务。
+请在之前输出的基础上，按照修改建议修改后输出完整的新版本（所有涉及的地方都要同步修改）。
 `;
         
         try {
             const response = await this.callAI(this.getTaskPrompt(task) + newPrompt);
             this.displayTaskResult(task, response);
+            
+            // 同步更新审核框，批准时保存的就是修改后的版本
+            this.currentReviewText = response;
+            this.reviewContent.innerHTML = this.formatContent(response);
+            this.reviewPanel.scrollIntoView({ behavior: 'smooth' });
+            this.addLog('system', '🔍 已按修改建议更新，请再次审核');
             
             // 清空修改框
             this.modifyText.value = '';
@@ -1987,14 +2199,16 @@ ${modification}
         if (!this.currentReviewResolve) return;
         
         this.addLog('system', '❌ 人工拒绝，重新执行');
-        this.reviewPanel.style.display = 'none';
         
-        // 重新执行当前任务
+        // 重新执行当前任务（保留原审核流程，避免工作流卡住）
         const task = this.state.currentTask;
         try {
             const response = await task.execute();
             this.displayTaskResult(task, response);
-            await this.requestReview(task, response);
+            this.currentReviewText = response;
+            this.reviewContent.innerHTML = this.formatContent(response);
+            this.reviewPanel.scrollIntoView({ behavior: 'smooth' });
+            this.addLog('system', '🔍 等待人工审核');
         } catch (error) {
             this.addLog('error', `重试失败: ${error.message}`);
         }
@@ -2034,6 +2248,8 @@ ${modification}
                     };
                     this.project.chapters.push(chapter);
                     this.updateChaptersDisplay();
+                    // 自动存入原稿工作台
+                    if (window.ManuscriptStore) window.ManuscriptStore.saveProgress(this);
                     
                     // 如果启用了自动导出，导出当前章节为Markdown文件
                     if (this.config.autoExportChapter) {
@@ -2045,6 +2261,9 @@ ${modification}
         
         // 保存到上下文
         this.project.context[`${task.role}_${task.name}`] = result;
+        
+        // 自动保存到书架
+        if (window.ManuscriptStore) window.ManuscriptStore.saveProgress(this);
     }
     
     // 导出章节为Markdown文件
@@ -2213,7 +2432,7 @@ ${this.formatCharacters(this.project.context.characters)}
 本作品由AI小说自动创作系统生成，仅供学习和研究使用。
 
 **创作系统**：AI小说自动创作系统 v1.0  
-**AI模型**：${this.config.provider === 'gemini' ? 'Google Gemini' : 'DeepSeek'}  
+**AI模型**：${this.providerName()}  
 **生成时间**：${new Date().toISOString()}
 
 ---
@@ -2441,7 +2660,7 @@ ${this.formatCharacters(this.project.context.characters)}
         if (this.project.length === 'infinite') {
             // 无限模式下显示已完成章节数
             this.totalProgress.textContent = `${this.project.chapters.length}章`;
-            this.targetChaptersEl.textContent = '∞';
+            this.targetChaptersEl.textContent = this.project.targetChapters;
         } else {
             // 计算基于章节的进度
             const chapterProgress = this.project.chapters.length / this.project.targetChapters;
@@ -2514,6 +2733,17 @@ ${this.formatCharacters(this.project.context.characters)}
         this.state.isPaused = !this.state.isPaused;
         this.pauseBtn.textContent = this.state.isPaused ? '▶️ 继续' : '⏸️ 暂停';
         this.updateStatus(this.state.isPaused ? '已暂停' : '运行中');
+        if (this.state.isPaused && window.ManuscriptStore) window.ManuscriptStore.saveProgress(this);
+    }
+    
+    // 停止当前创作（切换小说前调用）
+    stopRun() {
+        this.state.isRunning = false;
+        this.state.isPaused = false;
+        this.startBtn.disabled = false;
+        this.pauseBtn.disabled = true;
+        this.pauseBtn.textContent = '⏸️ 暂停';
+        this.updateStatus('待机中');
     }
     
     // 完成创作
@@ -2537,7 +2767,7 @@ ${this.formatCharacters(this.project.context.characters)}
     }
     
     // 保存项目
-    saveProject() {
+    saveProject(download = false) {
         // 保存完整的项目数据，包括状态和进度
         const saveData = {
             project: this.project,
@@ -2562,12 +2792,16 @@ ${this.formatCharacters(this.project.context.characters)}
         const projectData = JSON.stringify(saveData, null, 2);
         const timestamp = Date.now();
         
-        // 保存到localStorage
-        localStorage.setItem(`novel_project_${timestamp}`, projectData);
-        localStorage.setItem('novel_project_latest', projectData);
+        // 保存到书架（每部小说单独保存）
+        if (window.ManuscriptStore) window.ManuscriptStore.saveProgress(this);
+        try {
+            localStorage.setItem('novel_project_latest', projectData);
+        } catch (e) {
+            console.warn('本地存储空间不足', e);
+        }
         
-        // 同时导出为文件
-        this.exportProjectData(saveData);
+        // 手动保存时同时导出为文件
+        if (download) this.exportProjectData(saveData);
         
         this.addLog('system', '💾 项目已保存（包含完整上下文）');
     }
@@ -2756,6 +2990,9 @@ ${this.formatCharacters(this.project.context.characters)}
         this.novelTitle.value = this.project.title;
         this.novelType.value = this.project.type;
         this.novelLength.value = this.project.length || 'short';
+        const customEl = document.getElementById('customChapters');
+        if (customEl && this.project.customChapters) customEl.value = this.project.customChapters;
+        if (window.toggleCustomChapters) window.toggleCustomChapters();
         this.initialConcept.value = this.project.concept;
         
         if (this.project.style && this.writerStyle) {
@@ -2854,8 +3091,8 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: var(--surface-color);
-                border: 1px solid var(--border-color);
+                background: var(--surface-color, var(--bg-card));
+                border: 1px solid var(--border-color, var(--border-light));
                 border-radius: 8px;
                 padding: 20px;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.3);
@@ -2890,19 +3127,19 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
                 transition: all 0.3s ease;
             }
             .btn-primary {
-                background: var(--primary-color);
+                background: var(--primary-color, var(--primary-light));
                 color: white;
             }
             .btn-primary:hover {
                 opacity: 0.9;
             }
             .btn-secondary {
-                background: var(--surface-color);
+                background: var(--surface-color, var(--bg-card));
                 color: var(--text-primary);
-                border: 1px solid var(--border-color);
+                border: 1px solid var(--border-color, var(--border-light));
             }
             .btn-secondary:hover {
-                background: var(--hover-color);
+                background: var(--hover-color, var(--bg-hover));
             }
         `;
         document.head.appendChild(style);
@@ -3038,6 +3275,14 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         // 加载当前设置
         this.apiProviderSelect.value = this.config.provider;
         
+        // Claude 设置
+        const claudeTier = document.getElementById('claudeModelTier');
+        if (claudeTier) claudeTier.value = this.config.claudeModelTier || 'default';
+        const localKey = document.getElementById('anthropicApiKey');
+        if (localKey) localKey.value = this.config.anthropicApiKey || '';
+        const localModel = document.getElementById('claudeLocalModel');
+        if (localModel) localModel.value = this.config.claudeLocalModel || 'claude-opus-5-5';
+        
         // Gemini 设置
         this.geminiApiKeyInput.value = this.config.geminiApiKey;
         this.geminiModelSelect.value = this.config.geminiModel;
@@ -3046,6 +3291,13 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         this.deepseekApiKeyInput.value = this.config.deepseekApiKey;
         this.deepseekModelSelect.value = this.config.deepseekModel;
         this.deepseekEndpointInput.value = this.config.deepseekEndpoint;
+        
+        // MiniMax / 智谱GLM 设置
+        ['minimax', 'glm'].forEach(p => {
+            document.getElementById(`${p}ApiKey`).value = this.config[`${p}ApiKey`] || '';
+            document.getElementById(`${p}Model`).value = this.config[`${p}Model`];
+            document.getElementById(`${p}Endpoint`).value = this.config[`${p}Endpoint`];
+        });
         
         // 通用设置
         this.autoApproveCheck.checked = this.config.autoApprove;
@@ -3065,6 +3317,15 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         // 保存API提供商
         this.config.provider = this.apiProviderSelect.value;
         
+        // 保存Claude设置
+        const claudeTierSel = document.getElementById('claudeModelTier');
+        if (claudeTierSel) this.config.claudeModelTier = claudeTierSel.value;
+        const localKeyEl = document.getElementById('anthropicApiKey');
+        if (localKeyEl) this.config.anthropicApiKey = localKeyEl.value.trim();
+        const localModelEl = document.getElementById('claudeLocalModel');
+        if (localModelEl) this.config.claudeLocalModel = localModelEl.value;
+        try { localStorage.setItem('anthropic_api_key', this.config.anthropicApiKey || ''); } catch (e) { /* 忽略 */ }
+        
         // 保存Gemini设置
         this.config.geminiApiKey = this.geminiApiKeyInput.value.trim();
         this.config.geminiModel = this.geminiModelSelect.value;
@@ -3072,7 +3333,14 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         // 保存DeepSeek设置
         this.config.deepseekApiKey = this.deepseekApiKeyInput.value.trim();
         this.config.deepseekModel = this.deepseekModelSelect.value;
-        this.config.deepseekEndpoint = this.deepseekEndpointInput.value.trim();
+        this.config.deepseekEndpoint = this.deepseekEndpointInput.value.trim() || 'https://api.deepseek.com';
+        
+        // 保存MiniMax / 智谱GLM设置
+        ['minimax', 'glm'].forEach(p => {
+            this.config[`${p}ApiKey`] = document.getElementById(`${p}ApiKey`).value.trim();
+            this.config[`${p}Model`] = document.getElementById(`${p}Model`).value;
+            this.config[`${p}Endpoint`] = document.getElementById(`${p}Endpoint`).value.trim() || this.config[`${p}Endpoint`];
+        });
         
         // 保存通用设置
         this.config.autoApprove = this.autoApproveCheck.checked;
@@ -3087,10 +3355,12 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         localStorage.setItem('gemini_api_key', this.config.geminiApiKey);
         localStorage.setItem('deepseek_api_key', this.config.deepseekApiKey);
         localStorage.setItem('deepseek_endpoint', this.config.deepseekEndpoint);
+        localStorage.setItem('minimax_api_key', this.config.minimaxApiKey);
+        localStorage.setItem('glm_api_key', this.config.glmApiKey);
         localStorage.setItem('auto_novel_config', JSON.stringify(this.config));
         
         this.settingsModal.classList.remove('show');
-        this.addLog('system', `⚙️ 设置已保存 - 当前使用: ${this.config.provider === 'gemini' ? 'Gemini' : 'DeepSeek'}`);
+        this.addLog('system', `⚙️ 设置已保存 - 当前使用: ${this.providerName()}`);
     }
     
     // 加载配置
@@ -3098,6 +3368,17 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         const savedConfig = localStorage.getItem('auto_novel_config');
         if (savedConfig) {
             Object.assign(this.config, JSON.parse(savedConfig));
+        }
+        // 旧模型已下线，自动换成当前版本
+        const geminiOk = ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'];
+        if (!geminiOk.includes(this.config.geminiModel)) this.config.geminiModel = 'gemini-3.8-flash';
+        if (!['deepseek-v4-pro', 'deepseek-v4-flash'].includes(this.config.deepseekModel)) this.config.deepseekModel = 'deepseek-v4-flash';
+        
+        // 接入 Claude 后首次加载：默认切换到 Claude
+        if (!localStorage.getItem('claude_default_applied')) {
+            this.config.provider = 'claude';
+            localStorage.setItem('api_provider', 'claude');
+            localStorage.setItem('claude_default_applied', '1');
         }
     }
     

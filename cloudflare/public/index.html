@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI小说自动创作系统 - 监督模式</title>
+    <link rel="stylesheet" href="auto-novel-styles.css">
+    <link rel="stylesheet" href="manuscript.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部控制栏 -->
+        <header class="control-bar">
+            <div class="header-left">
+                <h1 class="app-title">🤖 AI小说自动创作系统</h1>
+                <div class="status-indicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="systemStatus">待机中</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="startBtn" class="btn-start">▶️ 开始创作</button>
+                <button id="pauseBtn" class="btn-pause" disabled>⏸️ 暂停</button>
+                <button id="shelfOpenBtn" class="btn-icon ms-open" title="我的书架">📚 书架</button>
+                <button id="msOpenBtn" class="btn-icon ms-open" title="原稿工作台">📜 原稿</button>
+                <button id="themeToggle" class="btn-icon" title="切换主题">🌓</button>
+                <button id="settingsBtn" class="btn-icon">⚙️</button>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <!-- 左侧：项目信息和进度 -->
+            <aside class="project-panel">
+                <div class="panel-section">
+                    <h2>📚 项目信息</h2>
+                    <div class="project-info">
+                        <div class="info-item">
+                            <label>小说名称：</label>
+                            <input type="text" id="novelTitle" class="input-field" placeholder="输入小说标题">
+                        </div>
+                        <div class="info-item">
+                            <label>小说类型：</label>
+                            <select id="novelType" class="input-field">
+                                <option value="mystery">推理悬疑</option>
+                                <option value="urban-suspense">都市悬疑</option>
+                                <option value="adventure">探险冒险</option>
+                                <option value="tomb-raiding">盗墓题材</option>
+                                <option value="antique">古董文物</option>
+                                <option value="xuanhuan">玄幻</option>
+                                <option value="fantasy">奇幻</option>
+                                <option value="revolution-era">革命时代</option>
+                                <option value="historical">历史题材</option>
+                            </select>
+                        </div>
+                        <div class="info-item">
+                            <label>小说篇幅：</label>
+                            <select id="novelLength" class="input-field">
+                                <option value="short">短篇（1-20章）</option>
+                                <option value="medium">中篇（21-40章）</option>
+                                <option value="long">长篇（40-60章）</option>
+                                <option value="infinite">无限续写模式（自定义章数）</option>
+                            </select>
+                        </div>
+                        <div class="info-item" id="customChaptersItem" style="display: none;">
+                            <label>目标章数：</label>
+                            <input type="number" id="customChapters" class="input-field" min="1" max="2000" value="200">
+                        </div>
+                        <div class="info-item">
+                            <label>初始概念：</label>
+                            <textarea id="initialConcept" class="input-field" rows="3" 
+                                placeholder="简述你的小说创意..."></textarea>
+                        </div>
+                        <div class="info-item">
+                            <label>写作风格：</label>
+                            <select id="writerStyle" class="input-field">
+                                <option value="">默认风格</option>
+                                <option value="bhxl-style">渤海小吏 - 历史趣谈</option>
+                                <option value="dbl-style">丹·布朗 - 悬疑惊悚</option>
+                                <option value="dnmy-style">当年明月 - 幽默历史</option>
+                                <option value="dygw-style">东野圭吾 - 推理小说</option>
+                                <option value="hm-style">何马 - 冒险探秘</option>
+                                <option value="zjc-style">紫金陈 - 现实悬疑</option>
+                                <option value="custom">自定义风格</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h2>📊 创作进度</h2>
+                    <div class="workflow-progress">
+                        <div class="stage-item" data-stage="concept">
+                            <div class="stage-icon">🏛️</div>
+                            <div class="stage-info">
+                                <h4>概念构建</h4>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="stage-item" data-stage="planning">
+                            <div class="stage-icon">📋</div>
+                            <div class="stage-info">
+                                <h4>详细规划</h4>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="stage-item" data-stage="creation">
+                            <div class="stage-icon">✍️</div>
+                            <div class="stage-info">
+                                <h4>内容创作</h4>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="stage-item" data-stage="revision">
+                            <div class="stage-icon">🔧</div>
+                            <div class="stage-info">
+                                <h4>修订完善</h4>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="stage-item" data-stage="forward">
+                            <div class="stage-icon">🔮</div>
+                            <div class="stage-info">
+                                <h4>前瞻规划</h4>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h2>⚡ 快速操作</h2>
+                    <div class="quick-actions">
+                        <button class="action-btn" id="msOpenBtn2">📜 原稿工作台（存稿 / 改稿）</button>
+                        <button class="action-btn" id="exportBtn">📄 导出为Markdown</button>
+                        <button class="action-btn" id="saveBtn">💾 保存进度</button>
+                        <button class="action-btn" id="loadBtn">📁 加载项目</button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 中央：AI工作流显示 -->
+            <main class="workflow-display">
+                <div class="workflow-header">
+                    <h2 id="currentTask">当前任务：等待开始</h2>
+                    <div class="task-timer">
+                        <span>⏱️ 用时：</span>
+                        <span id="taskTimer">00:00</span>
+                    </div>
+                </div>
+
+                <div class="workflow-content">
+                    <!-- AI执行日志 -->
+                    <div class="execution-log" id="executionLog">
+                        <div class="log-entry welcome">
+                            <div class="log-time">系统</div>
+                            <div class="log-content">
+                                欢迎使用AI小说自动创作系统！
+                                <br><br>
+                                本系统将自动执行完整的小说创作流程：
+                                <ol>
+                                    <li>首席架构师构建世界观</li>
+                                    <li>角色塑造师设计人物</li>
+                                    <li>情节规划师制定大纲</li>
+                                    <li>叙事执行者撰写内容</li>
+                                    <li>连续性监督官检查一致性</li>
+                                    <li>质量评估官评价质量</li>
+                                    <li>创作总监做最终决策</li>
+                                </ol>
+                                请填写项目信息后点击"开始创作"。
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 人类审核区 -->
+                    <div class="review-panel" id="reviewPanel" style="display: none;">
+                        <div class="review-header">
+                            <h3>🔍 需要您的审核</h3>
+                            <span class="review-role" id="reviewRole"></span>
+                        </div>
+                        <div class="review-content" id="reviewContent">
+                            <!-- AI输出内容将显示在这里 -->
+                        </div>
+                        <div class="review-actions">
+                            <button class="btn-approve" id="approveBtn">✅ 批准</button>
+                            <button class="btn-modify" id="modifyBtn">✏️ 修改建议</button>
+                            <button class="btn-reject" id="rejectBtn">❌ 重做</button>
+                        </div>
+                        <div class="modify-input" id="modifyInput" style="display: none;">
+                            <textarea id="modifyText" placeholder="请输入您的修改建议..."></textarea>
+                            <button class="btn-submit" id="submitModifyBtn">提交修改</button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- 右侧：成果展示 -->
+            <aside class="output-panel">
+                <div class="output-tabs">
+                    <button class="tab-btn active" data-tab="worldview">世界观</button>
+                    <button class="tab-btn" data-tab="characters">角色</button>
+                    <button class="tab-btn" data-tab="outline">大纲</button>
+                    <button class="tab-btn" data-tab="chapters">章节</button>
+                </div>
+
+                <div class="tab-content active" id="worldviewTab">
+                    <h3>🌍 世界观设定</h3>
+                    <div id="worldviewContent" class="content-display">
+                        <p class="placeholder">等待AI构建世界观...</p>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="charactersTab">
+                    <h3>👥 角色档案</h3>
+                    <div id="charactersContent" class="content-display">
+                        <p class="placeholder">等待AI创建角色...</p>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="outlineTab">
+                    <h3>📝 故事大纲</h3>
+                    <div id="outlineContent" class="content-display">
+                        <p class="placeholder">等待AI规划情节...</p>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="chaptersTab">
+                    <h3>📖 章节内容</h3>
+                    <div id="chaptersContent" class="content-display">
+                        <p class="placeholder">等待AI撰写章节...</p>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- 底部状态栏 -->
+        <footer class="status-bar">
+            <div class="status-left">
+                <span>📊 总进度：</span>
+                <span id="totalProgress">0%</span>
+                <span class="status-separator">|</span>
+                <span>📖 章节：</span>
+                <span id="currentChapter">0</span>
+                <span>/</span>
+                <span id="targetChapters">0</span>
+            </div>
+            <div class="status-center">
+                <span>✅ 已完成：</span>
+                <span id="completedTasks">0</span>
+                <span>/ 总任务：</span>
+                <span id="totalTasks">0</span>
+            </div>
+            <div class="status-right">
+                <span>⏰ 总用时：</span>
+                <span id="totalTime">00:00:00</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 移动端菜单按钮 -->
+    <button class="mobile-menu-btn" id="mobileMenuBtn">📋</button>
+    <button class="mobile-output-btn" id="mobileOutputBtn">📚</button>
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <!-- 设置模态框 -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>系统设置</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <h4>API配置</h4>
+                    <div class="form-item">
+                        <label>API 提供商</label>
+                        <select id="apiProvider" class="input-field" onchange="switchAPIProvider()">
+                            <option value="claude">Claude（默认，无需 API Key）</option>
+                            <option value="gemini">Google Gemini</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="minimax">MiniMax</option>
+                            <option value="glm">智谱 GLM</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Claude 配置 -->
+                    <div id="claudeConfig" class="api-config">
+                        <div class="claude-local-only" style="display:none">
+                            <div class="form-item">
+                                <label>Claude 模型（API Key 模式）</label>
+                                <select id="claudeLocalModel" class="input-field">
+                                    <option value="claude-opus-5-5">Claude Opus 5.5 - 默认，写作质量最好</option>
+                                    <option value="claude-sonnet-5-5">Claude Sonnet 5.5 - 更快更便宜</option>
+                                    <option value="claude-haiku-5-5">Claude Haiku 5.5 - 最便宜</option>
+                                </select>
+                            </div>
+                            <div class="form-item">
+                                <label>Anthropic API Key</label>
+                                <input type="password" id="anthropicApiKey" class="input-field" placeholder="已设置环境变量 ANTHROPIC_API_KEY 时可留空">
+                            </div>
+                        </div>
+                        <div class="form-item claude-web-only">
+                            <label>Claude 模型档位</label>
+                            <select id="claudeModelTier" class="input-field">
+                                <option value="default">标准 - 质量与速度平衡</option>
+                                <option value="complex">高级 - 最强写作质量</option>
+                                <option value="quick">快速 - 响应最快</option>
+                            </select>
+                        </div>
+                        <p class="claude-web-only" style="font-size:12px;opacity:.75;margin:4px 0 0;">使用你自己的 Claude 账号额度，首次生成时会请求授权。</p>
+                    </div>
+                    
+                    <!-- Gemini 配置 -->
+                    <div id="geminiConfig" class="api-config" style="display: none;">
+                        <div class="form-item">
+                            <label>Gemini API Key</label>
+                            <input type="password" id="geminiApiKey" class="input-field" placeholder="输入你的 Gemini API Key">
+                        </div>
+                        <div class="form-item">
+                            <label>Gemini 模型</label>
+                            <select id="geminiModel" class="input-field">
+                                <option value="gemini-3.8-flash">Gemini 3.8 Flash - 推荐，速度与质量平衡</option>
+                                <option value="gemini-4-argon">Gemini 4 Argon - 最强</option>
+                                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (预览版)</option>
+                                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite - 最便宜</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- DeepSeek 配置 -->
+                    <div id="deepseekConfig" class="api-config" style="display: none;">
+                        <div class="form-item">
+                            <label>DeepSeek API Key</label>
+                            <input type="password" id="deepseekApiKey" class="input-field" placeholder="输入你的 DeepSeek API Key">
+                        </div>
+                        <div class="form-item">
+                            <label>DeepSeek 模型</label>
+                            <select id="deepseekModel" class="input-field">
+                                <option value="deepseek-v4-flash">DeepSeek V4 Flash - 快速、便宜</option>
+                                <option value="deepseek-v4-pro">DeepSeek V4 Pro - 旗舰</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label>API 端点（可选）</label>
+                            <input type="text" id="deepseekEndpoint" class="input-field" 
+                                   placeholder="默认: https://api.deepseek.com" 
+                                   value="https://api.deepseek.com">
+                        </div>
+                    </div>
+
+                    <!-- MiniMax 配置 -->
+                    <div id="minimaxConfig" class="api-config" style="display: none;">
+                        <div class="form-item">
+                            <label>MiniMax API Key</label>
+                            <input type="password" id="minimaxApiKey" class="input-field" placeholder="输入你的 MiniMax API Key">
+                        </div>
+                        <div class="form-item">
+                            <label>MiniMax 模型</label>
+                            <select id="minimaxModel" class="input-field">
+                                <option value="MiniMax-M3">MiniMax-M3 - 旗舰</option>
+                                <option value="MiniMax-M3.1-Flash">MiniMax-M3.1-Flash - 快速</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label>API 端点（可选）</label>
+                            <input type="text" id="minimaxEndpoint" class="input-field" value="https://api.minimax.cn/v1" placeholder="国内: https://api.minimax.cn/v1 ／ 海外: https://api.minimax.io/v1">
+                        </div>
+                    </div>
+
+                    <!-- 智谱 GLM 配置 -->
+                    <div id="glmConfig" class="api-config" style="display: none;">
+                        <div class="form-item">
+                            <label>智谱 API Key</label>
+                            <input type="password" id="glmApiKey" class="input-field" placeholder="输入你的智谱开放平台 API Key">
+                        </div>
+                        <div class="form-item">
+                            <label>GLM 模型</label>
+                            <select id="glmModel" class="input-field">
+                                <option value="glm-5.3">GLM-5.3 - 旗舰</option>
+                                <option value="glm-5.1">GLM-5.1</option>
+                                <option value="glm-4.7-flash">GLM-4.7-Flash - 免费</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label>API 端点（可选）</label>
+                            <input type="text" id="glmEndpoint" class="input-field" value="https://open.bigmodel.cn/api/paas/v4">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h4>自动化设置</h4>
+                    <div class="form-item">
+                        <label>
+                            <input type="checkbox" id="autoApprove" checked>
+                            自动批准低风险决策
+                        </label>
+                    </div>
+                    <div class="form-item">
+                        <label>
+                            <input type="checkbox" id="pauseOnMilestone" checked>
+                            在重要里程碑暂停审核
+                        </label>
+                    </div>
+                    <div class="form-item">
+                        <label>
+                            <input type="checkbox" id="autoExportChapter" checked>
+                            每章完成后自动导出Markdown
+                        </label>
+                    </div>
+                    <div class="form-item">
+                        <label>任务间隔时间（秒）</label>
+                        <input type="number" id="taskInterval" value="2" min="0" max="60">
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h4>创作参数</h4>
+                    <div class="form-item">
+                        <label>创造性 (0-2)</label>
+                        <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.8">
+                        <span id="tempValue">0.8</span>
+                    </div>
+                    <div class="form-item">
+                        <label>每章目标字数</label>
+                        <input type="number" id="chapterWords" value="3000" min="1000" max="10000">
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <h4>写作风格设置</h4>
+                    <div class="form-item">
+                        <label>自定义风格文件（.md格式）</label>
+                        <input type="file" id="customStyleFile" accept=".md" style="width: 100%;">
+                        <small style="color: #666;">上传自定义的作家风格提示词文件</small>
+                    </div>
+                    <div class="form-item" id="customStyleStatus" style="display: none;">
+                        <label>已加载风格：</label>
+                        <span id="loadedStyleName" style="color: #4CAF50;"></span>
+                        <button class="btn-cancel" onclick="clearCustomStyle()" style="margin-left: 10px; padding: 5px 10px;">清除</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="closeModal()">取消</button>
+                <button class="btn-save" onclick="saveSettings()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 书架 -->
+    <div id="shelf" class="ms-workbench">
+        <div class="ms-topbar">
+            <div class="ms-top-left">
+                <strong class="ms-title">📚 我的书架</strong>
+                <span id="shelfInfo" class="ms-info"></span>
+            </div>
+            <div class="ms-top-right">
+                <button class="ms-btn" id="shelfImport" title="导入以前保存的进度 JSON 或 Markdown 原稿">📥 导入</button>
+                <button class="ms-btn" id="shelfClose">✕ 关闭</button>
+            </div>
+        </div>
+        <div class="shelf-body">
+            <div id="shelfGrid" class="shelf-grid"></div>
+        </div>
+        <div id="shelfToast" class="ms-toast"></div>
+    </div>
+
+    <!-- 原稿工作台 -->
+    <div id="msWorkbench" class="ms-workbench">
+        <div class="ms-topbar">
+            <div class="ms-top-left">
+                <strong class="ms-title">📜 原稿工作台</strong>
+                <select id="msSelect" class="input-field ms-select"></select>
+                <span id="msInfo" class="ms-info"></span>
+            </div>
+            <div class="ms-top-right">
+                <button class="ms-btn" id="msFromProject" title="把当前创作项目的全部章节存为原稿">💾 存入当前项目</button>
+                <button class="ms-btn" id="msImport" title="导入 Markdown / 文本 / 进度 JSON">📥 导入</button>
+                <button class="ms-btn" id="msExportMd">📄 导出MD</button>
+                <button class="ms-btn" id="msExportJson">🗂 导出JSON</button>
+                <button class="ms-btn danger" id="msDelete">🗑</button>
+                <button class="ms-btn" id="msClose">✕ 关闭</button>
+            </div>
+        </div>
+        <div id="msJobBar" class="ms-jobbar" style="display:none">
+            <span id="msJobText"></span>
+            <button class="ms-btn danger" id="msJobStop">⏹ 停止</button>
+        </div>
+        <div id="msViewport" class="ms-viewport">
+            <div id="msWorld" class="ms-world"></div>
+            <div id="msEmpty" class="ms-empty">
+                <div>
+                    <div style="font-size:42px">📜</div>
+                    <p>还没有原稿。</p>
+                    <p class="ms-muted">开始创作后，每写完一章会自动存进这里；也可以点「存入当前项目」或「导入」已有的 Markdown 原稿。</p>
+                </div>
+            </div>
+            <div class="ms-controls">
+                <button class="ms-btn" id="msZoomOut">－</button>
+                <span id="msZoom" class="ms-zoom">100%</span>
+                <button class="ms-btn" id="msZoomIn">＋</button>
+                <button class="ms-btn" id="msFit">适应</button>
+                <button class="ms-btn" id="msLayout">重新排列</button>
+                <span id="msStorageMode" class="ms-muted"></span>
+            </div>
+            <div class="ms-hint ms-muted">拖动空白处平移 · 滚轮缩放 · 拖动卡片标题移动 · 双击卡片编辑</div>
+        </div>
+
+        <aside id="msEditor" class="ms-editor">
+            <div class="ms-ed-head">
+                <strong id="msEdNum"></strong>
+                <input id="msEdTitle" class="input-field" placeholder="章节标题">
+                <button class="ms-btn" id="msEdClose">✕</button>
+            </div>
+            <textarea id="msEdContent" class="ms-ed-text" spellcheck="false"></textarea>
+            <div class="ms-ed-foot">
+                <span id="msEdCount" class="ms-muted"></span>
+                <select id="msEdVersions" class="input-field ms-select"></select>
+                <span class="ms-spacer"></span>
+                <button class="ms-btn" id="msEdSave">💾 保存</button>
+                <button class="ms-btn primary" id="msEdSaveRewrite">💾 保存并改写后续章节</button>
+            </div>
+        </aside>
+
+        <div id="msRewriteDlg" class="ms-dialog">
+            <div class="ms-dialog-box">
+                <h3>🔁 从 <span id="msRwFrom"></span> 之后重写</h3>
+                <label class="ms-row"><input type="radio" name="msRwMode" id="msRwModeRewrite">
+                    重写后续章节，直到第 <input type="number" id="msRwTo" class="input-field ms-num"> 章 <span id="msRwLastHint" class="ms-muted"></span></label>
+                <label class="ms-row ms-indent">写到最后一章后再续写 <input type="number" id="msRwCountAfter" class="input-field ms-num" value="0" min="0" max="50"> 章新章节</label>
+                <label class="ms-row"><input type="radio" name="msRwMode" id="msRwModeContinue">
+                    不改已有章节，在末尾续写 <input type="number" id="msRwCount" class="input-field ms-num" value="1" min="1" max="50"> 章</label>
+                <label class="ms-row"><input type="checkbox" id="msRwKeepPlot" checked> 参考旧版剧情（只改与前文冲突的地方）</label>
+                <label class="ms-row">每章约 <input type="number" id="msRwWords" class="input-field ms-num" value="3000"> 字</label>
+                <textarea id="msRwNote" class="input-field ms-note" placeholder="补充要求（可选），例如：主角在第8章不再出现在东京，后续故事都在北京展开"></textarea>
+                <p class="ms-muted">旧版本会保存在每章的「历史版本」里，可以随时恢复。</p>
+                <div class="ms-dialog-actions">
+                    <button class="ms-btn" id="msRwCancel">取消</button>
+                    <button class="ms-btn primary" id="msRwStart">开始重写</button>
+                </div>
+            </div>
+        </div>
+        <div id="msToast" class="ms-toast"></div>
+    </div>
+
+    <script src="auto-novel-app.js"></script>
+    <script src="manuscript.js"></script>
+    <script>
+        // 无限续写模式下显示目标章数输入框
+        function toggleCustomChapters() {
+            const len = document.getElementById('novelLength');
+            document.getElementById('customChaptersItem').style.display = len.value === 'infinite' ? 'block' : 'none';
+        }
+        document.getElementById('novelLength').addEventListener('change', toggleCustomChapters);
+        toggleCustomChapters();
+
+        // API 提供商切换
+        function switchAPIProvider() {
+            const provider = document.getElementById('apiProvider').value;
+            document.getElementById('claudeConfig').style.display = provider === 'claude' ? 'block' : 'none';
+            const local = window.NovelLocal && window.NovelLocal.ok;
+            document.querySelectorAll('.claude-local-only').forEach(el => { el.style.display = local ? 'block' : 'none'; });
+            document.querySelectorAll('.claude-web-only').forEach(el => { el.style.display = local ? 'none' : ''; });
+            document.getElementById('geminiConfig').style.display = provider === 'gemini' ? 'block' : 'none';
+            document.getElementById('deepseekConfig').style.display = provider === 'deepseek' ? 'block' : 'none';
+            document.getElementById('minimaxConfig').style.display = provider === 'minimax' ? 'block' : 'none';
+            document.getElementById('glmConfig').style.display = provider === 'glm' ? 'block' : 'none';
+        }
+
+        // 清除自定义风格
+        function clearCustomStyle() {
+            localStorage.removeItem('customStyleContent');
+            localStorage.removeItem('customStyleName');
+            document.getElementById('customStyleFile').value = '';
+            document.getElementById('customStyleStatus').style.display = 'none';
+            document.getElementById('writerStyle').value = '';
+            // 通知系统清除风格
+            if (window.novelSystem) {
+                window.novelSystem.project.style = '';
+                window.novelSystem.project.styleContent = '';
+            }
+        }
+
+        // 处理自定义风格文件上传
+        document.addEventListener('DOMContentLoaded', function() {
+            const customStyleFile = document.getElementById('customStyleFile');
+            if (customStyleFile) {
+                customStyleFile.addEventListener('change', async function(e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    if (!file.name.endsWith('.md')) {
+                        alert('请上传 .md 格式的文件');
+                        this.value = '';
+                        return;
+                    }
+                    
+                    try {
+                        const content = await file.text();
+                        const fileName = file.name.replace('.md', '');
+                        
+                        // 保存到 localStorage
+                        localStorage.setItem('customStyleContent', content);
+                        localStorage.setItem('customStyleName', fileName);
+                        
+                        // 显示已加载状态
+                        document.getElementById('loadedStyleName').textContent = fileName;
+                        document.getElementById('customStyleStatus').style.display = 'block';
+                        
+                        // 设置下拉框为自定义
+                        document.getElementById('writerStyle').value = 'custom';
+                        
+                        alert(`已成功加载风格文件：${fileName}`);
+                    } catch (error) {
+                        alert('读取文件失败：' + error.message);
+                        this.value = '';
+                    }
+                });
+            }
+            
+            // 检查是否有已保存的自定义风格
+            const savedStyleName = localStorage.getItem('customStyleName');
+            if (savedStyleName) {
+                document.getElementById('loadedStyleName').textContent = savedStyleName;
+                document.getElementById('customStyleStatus').style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
