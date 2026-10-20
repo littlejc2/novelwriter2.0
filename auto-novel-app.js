@@ -51,11 +51,17 @@ class AutoNovelSystem {
             minimaxApiKey: localStorage.getItem('minimax_api_key') || '',
             minimaxModel: 'MiniMax-M3',
             minimaxEndpoint: 'https://api.minimax.cn/v1',
+            // 接口类型：auto（按 Key 判断，sk-cp- 开头为 Token Plan）、tokenplan、api（按量付费）
+            minimaxMode: 'auto',
+            minimaxPlanEndpoint: 'https://api.minimaxi.com/anthropic',
             
             // 智谱 GLM 配置
             glmApiKey: localStorage.getItem('glm_api_key') || '',
-            glmModel: 'glm-5.3',
+            glmModel: 'glm-5.2',
             glmEndpoint: 'https://open.bigmodel.cn/api/paas/v4',
+            // 接口类型：coding（GLM Coding Plan 套餐）、api（按量付费）
+            glmMode: 'coding',
+            glmCodingEndpoint: 'https://open.bigmodel.cn/api/anthropic',
             
             // 通用配置
             temperature: 0.8,
@@ -1184,6 +1190,16 @@ ${this.getProjectContext()}
         } else if (this.config.provider === 'deepseek') {
             return await this.callDeepSeekAPI(prompt);
         } else if (this.config.provider === 'minimax') {
+            if (this.minimaxUsesPlan()) {
+                // Token Plan（订阅）Key 只能用 Anthropic 兼容接口
+                return await this.callAnthropicCompatible(prompt, {
+                    name: 'MiniMax Token Plan',
+                    endpoint: this.config.minimaxPlanEndpoint || 'https://api.minimaxi.com/anthropic',
+                    apiKey: this.config.minimaxApiKey,
+                    model: this.config.minimaxModel,
+                    maxTokens: 32768
+                });
+            }
             return await this.callOpenAICompatible(prompt, {
                 name: 'MiniMax',
                 endpoint: this.config.minimaxEndpoint,
@@ -1193,6 +1209,16 @@ ${this.getProjectContext()}
                 extra: { reasoning_split: true, max_completion_tokens: 65536 }
             });
         } else if (this.config.provider === 'glm') {
+            if (this.config.glmMode !== 'api') {
+                // Coding Plan 套餐走 Anthropic 兼容接口（和 Claude Code / cc-switch 里的配置一样）
+                return await this.callAnthropicCompatible(prompt, {
+                    name: '智谱GLM Coding Plan',
+                    endpoint: this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/anthropic',
+                    apiKey: this.config.glmApiKey,
+                    model: this.config.glmModel,
+                    maxTokens: 32768
+                });
+            }
             return await this.callOpenAICompatible(prompt, {
                 name: '智谱GLM',
                 endpoint: this.config.glmEndpoint,
@@ -1288,7 +1314,98 @@ ${this.getProjectContext()}
         return { claude: 'Claude', gemini: 'Google Gemini', deepseek: 'DeepSeek', minimax: 'MiniMax', glm: '智谱GLM' }[this.config.provider] || this.config.provider;
     }
     
-    // OpenAI 兼容接口调用（MiniMax、智谱GLM）
+    minimaxUsesPlan() {
+        const mode = this.config.minimaxMode || 'auto';
+        if (mode === 'auto') return /^sk-cp-/.test(this.config.minimaxApiKey || '');
+        return mode === 'tokenplan';
+    }
+    
+    // 把失败的响应变成看得懂的错误（Cloudflare 的 52x 页面不是 JSON）
+    async responseError(response, name) {
+        const raw = await response.text().catch(() => '');
+        let msg = '';
+        try {
+            const d = JSON.parse(raw);
+            msg = d.error?.message || d.base_resp?.status_msg || d.message || '';
+        } catch (e) { /* 不是 JSON */ }
+        const hints = {
+            401: 'Key 无效或类型不对',
+            403: '没有权限，检查 Key 和接口地址',
+            429: '请求太频繁或额度用完。智谱 Coding Plan 用户请把接口类型选成「Coding Plan」',
+            520: '服务器没收到 AI 接口的有效回复，通常是 Key 和接口类型不匹配（MiniMax Token Plan 的 sk-cp- Key 要用 Token Plan 接口），或接口地址填错',
+            522: '连接 AI 接口超时',
+            524: 'AI 生成太久被中断，可以把每章字数调小再试'
+        };
+        const hint = hints[response.status];
+        return new Error(`${name} 错误 ${response.status}：${msg || hint || '请求失败'}${msg && hint ? `（${hint}）` : ''}`);
+    }
+    
+    // 逐条读取 SSE 事件（data: 行），每条交给 onData
+    async readSSE(response, onData) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        const handle = evt => {
+            for (const line of evt.split('\n')) {
+                if (!line.startsWith('data:')) continue;
+                const payload = line.slice(5).trim();
+                if (!payload || payload === '[DONE]') continue;
+                let d;
+                try { d = JSON.parse(payload); } catch (e) { continue; }
+                onData(d);
+            }
+        };
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+                handle(buf.slice(0, idx));
+                buf = buf.slice(idx + 2);
+            }
+        }
+        if (buf.trim()) handle(buf);
+    }
+    
+    // Anthropic 兼容接口（MiniMax Token Plan）：流式返回，避免长时间生成被 Cloudflare 中断
+    async callAnthropicCompatible(prompt, opts) {
+        if (!opts.apiKey) throw new Error(`请先设置 ${opts.name} Key`);
+        const temperature = Math.min(1, Math.max(0.01, parseFloat(this.config.temperature) || 0.7));
+        const response = await netFetch(`${opts.endpoint.replace(/\/+$/, '').replace(/\/v1(\/messages)?$/, '')}/v1/messages`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream',
+                'Authorization': `Bearer ${opts.apiKey}`,
+                'x-api-key': opts.apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: opts.model,
+                max_tokens: opts.maxTokens || 32768,
+                system: this.getSystemPrompt(),
+                messages: [{ role: 'user', content: prompt }],
+                temperature,
+                stream: true
+            })
+        });
+        if (!response.ok) throw await this.responseError(response, opts.name);
+        let data;
+        if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
+            data = await this.readClaudeStream(response);
+        } else {
+            const d = await response.json();
+            if (d.type === 'error') throw new Error(d.error?.message || `${opts.name} 返回错误`);
+            data = { text: (d.content || []).filter(b => b.type === 'text').map(b => b.text).join(''), stop_reason: d.stop_reason };
+        }
+        if (data.stop_reason === 'max_tokens') this.addLog('system', `⚠️ ${opts.name} 回复达到长度上限，内容可能不完整`);
+        const text = (data.text || '').replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+        if (!text) throw new Error(`${opts.name} 没有返回内容`);
+        return text;
+    }
+    
+    // OpenAI 兼容接口调用（MiniMax 按量付费、智谱GLM、DeepSeek），流式返回
     async callOpenAICompatible(prompt, opts) {
         if (!opts.apiKey) throw new Error(`请先设置 ${opts.name} API Key`);
         const requestBody = Object.assign({
@@ -1297,28 +1414,47 @@ ${this.getProjectContext()}
                 { role: 'system', content: this.getSystemPrompt() },
                 { role: 'user', content: prompt }
             ],
-            temperature: parseFloat(this.config.temperature)
+            temperature: parseFloat(this.config.temperature),
+            stream: true
         }, opts.extra || {});
         
         const response = await netFetch(`${opts.endpoint.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Accept': 'text/event-stream',
                 'Authorization': `Bearer ${opts.apiKey}`
             },
             body: JSON.stringify(requestBody)
         });
+        if (!response.ok) throw await this.responseError(response, opts.name);
         
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            throw new Error(data.error?.message || data.base_resp?.status_msg || `HTTP error! status: ${response.status}`);
+        const checkBase = d => {
+            if (d.base_resp && d.base_resp.status_code) {
+                throw new Error(d.base_resp.status_msg || `${opts.name} 错误码 ${d.base_resp.status_code}`);
+            }
+            if (d.error) throw new Error(d.error.message || `${opts.name} 返回错误`);
+        };
+        let content = '', finish = null;
+        if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
+            await this.readSSE(response, d => {
+                checkBase(d);
+                const c = d.choices?.[0];
+                if (!c) return;
+                if (c.delta?.content) content += c.delta.content;
+                else if (c.message?.content && !content) content = c.message.content;
+                if (c.finish_reason) finish = c.finish_reason;
+            });
+        } else {
+            const data = await response.json().catch(() => ({}));
+            checkBase(data);
+            content = data.choices?.[0]?.message?.content || '';
+            finish = data.choices?.[0]?.finish_reason;
         }
-        if (data.base_resp && data.base_resp.status_code) {
-            throw new Error(data.base_resp.status_msg || `${opts.name} 错误码 ${data.base_resp.status_code}`);
-        }
-        const content = data.choices?.[0]?.message?.content;
-        if (!content) throw new Error(`无效的${opts.name} API响应格式`);
-        return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+        if (finish === 'length') this.addLog('system', `⚠️ ${opts.name} 回复达到长度上限，内容可能不完整`);
+        content = content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+        if (!content) throw new Error(`${opts.name} 没有返回内容`);
+        return content;
     }
     
     // Gemini API 调用
@@ -1381,45 +1517,13 @@ ${this.getProjectContext()}
     
     // DeepSeek API 调用
     async callDeepSeekAPI(prompt) {
-        const API_URL = `${this.config.deepseekEndpoint}/chat/completions`;
-        
-        const requestBody = {
+        return await this.callOpenAICompatible(prompt, {
+            name: 'DeepSeek',
+            endpoint: this.config.deepseekEndpoint,
+            apiKey: this.config.deepseekApiKey,
             model: this.config.deepseekModel,
-            messages: [
-                {
-                    role: "system",
-                    content: this.getSystemPrompt()
-                },
-                {
-                    role: "user",
-                    content: prompt
-                }
-            ],
-            temperature: parseFloat(this.config.temperature),
-            max_tokens: 32768
-        };
-        
-        const response = await netFetch(API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.config.deepseekApiKey}`
-            },
-            body: JSON.stringify(requestBody)
+            extra: { max_tokens: 32768 }
         });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.choices && data.choices[0]?.message?.content) {
-            return data.choices[0].message.content;
-        } else {
-            throw new Error('无效的DeepSeek API响应格式');
-        }
     }
     
     // 获取系统prompt
@@ -3298,6 +3402,10 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
             document.getElementById(`${p}Model`).value = this.config[`${p}Model`];
             document.getElementById(`${p}Endpoint`).value = this.config[`${p}Endpoint`];
         });
+        document.getElementById('minimaxMode').value = this.config.minimaxMode || 'auto';
+        document.getElementById('minimaxPlanEndpoint').value = this.config.minimaxPlanEndpoint || 'https://api.minimaxi.com/anthropic';
+        document.getElementById('glmMode').value = this.config.glmMode || 'coding';
+        document.getElementById('glmCodingEndpoint').value = this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/anthropic';
         
         // 通用设置
         this.autoApproveCheck.checked = this.config.autoApprove;
@@ -3341,6 +3449,10 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
             this.config[`${p}Model`] = document.getElementById(`${p}Model`).value;
             this.config[`${p}Endpoint`] = document.getElementById(`${p}Endpoint`).value.trim() || this.config[`${p}Endpoint`];
         });
+        this.config.minimaxMode = document.getElementById('minimaxMode').value;
+        this.config.minimaxPlanEndpoint = document.getElementById('minimaxPlanEndpoint').value.trim() || 'https://api.minimaxi.com/anthropic';
+        this.config.glmMode = document.getElementById('glmMode').value;
+        this.config.glmCodingEndpoint = document.getElementById('glmCodingEndpoint').value.trim() || 'https://open.bigmodel.cn/api/anthropic';
         
         // 保存通用设置
         this.config.autoApprove = this.autoApproveCheck.checked;
@@ -3373,6 +3485,8 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         const geminiOk = ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'];
         if (!geminiOk.includes(this.config.geminiModel)) this.config.geminiModel = 'gemini-3.8-flash';
         if (!['deepseek-v4-pro', 'deepseek-v4-flash'].includes(this.config.deepseekModel)) this.config.deepseekModel = 'deepseek-v4-flash';
+        // GLM Coding Plan 改用 Anthropic 兼容接口
+        if (this.config.glmCodingEndpoint === 'https://open.bigmodel.cn/api/coding/paas/v4') this.config.glmCodingEndpoint = 'https://open.bigmodel.cn/api/anthropic';
         
         // 接入 Claude 后首次加载：默认切换到 Claude
         if (!localStorage.getItem('claude_default_applied')) {

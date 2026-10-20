@@ -287,8 +287,8 @@
                             <option value="claude">Claude（默认，无需 API Key）</option>
                             <option value="gemini">Google Gemini</option>
                             <option value="deepseek">DeepSeek</option>
-                            <option value="minimax">MiniMax</option>
-                            <option value="glm">智谱 GLM</option>
+                            <option value="minimax">MiniMax（支持 Token Plan）</option>
+                            <option value="glm">智谱 GLM（支持 Coding Plan）</option>
                         </select>
                     </div>
                     
@@ -361,8 +361,17 @@
                     <!-- MiniMax 配置 -->
                     <div id="minimaxConfig" class="api-config" style="display: none;">
                         <div class="form-item">
-                            <label>MiniMax API Key</label>
-                            <input type="password" id="minimaxApiKey" class="input-field" placeholder="输入你的 MiniMax API Key">
+                            <label>接口类型</label>
+                            <select id="minimaxMode" class="input-field" onchange="switchMiniMaxMode()">
+                                <option value="auto">自动（按 Key 判断，sk-cp- 开头为 Token Plan）</option>
+                                <option value="tokenplan">Token Plan 订阅（Anthropic 兼容接口）</option>
+                                <option value="api">按量付费 API（OpenAI 兼容接口）</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
+                            <label>MiniMax Key</label>
+                            <input type="password" id="minimaxApiKey" class="input-field" placeholder="Token Plan 订阅 Key（sk-cp-…）或按量付费 API Key" oninput="switchMiniMaxMode()">
+                            <small id="minimaxModeHint" style="display: block; margin-top: 6px; color: #666; line-height: 1.6;"></small>
                         </div>
                         <div class="form-item">
                             <label>MiniMax 模型</label>
@@ -371,7 +380,11 @@
                                 <option value="MiniMax-M3.1-Flash">MiniMax-M3.1-Flash - 快速</option>
                             </select>
                         </div>
-                        <div class="form-item">
+                        <div class="form-item" id="minimaxPlanEndpointItem">
+                            <label>Token Plan 接口地址（可选）</label>
+                            <input type="text" id="minimaxPlanEndpoint" class="input-field" value="https://api.minimaxi.com/anthropic" placeholder="https://api.minimaxi.com/anthropic">
+                        </div>
+                        <div class="form-item" id="minimaxEndpointItem">
                             <label>API 端点（可选）</label>
                             <input type="text" id="minimaxEndpoint" class="input-field" value="https://api.minimax.cn/v1" placeholder="国内: https://api.minimax.cn/v1 ／ 海外: https://api.minimax.io/v1">
                         </div>
@@ -380,18 +393,31 @@
                     <!-- 智谱 GLM 配置 -->
                     <div id="glmConfig" class="api-config" style="display: none;">
                         <div class="form-item">
+                            <label>接口类型</label>
+                            <select id="glmMode" class="input-field" onchange="switchGLMMode()">
+                                <option value="coding">GLM Coding Plan 套餐（Anthropic 兼容接口）</option>
+                                <option value="api">按量付费 API（普通接口）</option>
+                            </select>
+                        </div>
+                        <div class="form-item">
                             <label>智谱 API Key</label>
                             <input type="password" id="glmApiKey" class="input-field" placeholder="输入你的智谱开放平台 API Key">
+                            <small id="glmModeHint" style="display: block; margin-top: 6px; color: #666; line-height: 1.6;"></small>
                         </div>
                         <div class="form-item">
                             <label>GLM 模型</label>
                             <select id="glmModel" class="input-field">
+                                <option value="glm-5.2">GLM-5.2 - Coding Plan 推荐</option>
                                 <option value="glm-5.3">GLM-5.3 - 旗舰</option>
                                 <option value="glm-5.1">GLM-5.1</option>
                                 <option value="glm-4.7-flash">GLM-4.7-Flash - 免费</option>
                             </select>
                         </div>
-                        <div class="form-item">
+                        <div class="form-item" id="glmCodingEndpointItem">
+                            <label>Coding Plan 接口地址（可选）</label>
+                            <input type="text" id="glmCodingEndpoint" class="input-field" value="https://open.bigmodel.cn/api/anthropic" placeholder="国内: https://open.bigmodel.cn/api/anthropic ／ 海外: https://api.z.ai/api/anthropic">
+                        </div>
+                        <div class="form-item" id="glmEndpointItem">
                             <label>API 端点（可选）</label>
                             <input type="text" id="glmEndpoint" class="input-field" value="https://open.bigmodel.cn/api/paas/v4">
                         </div>
@@ -575,7 +601,34 @@
             document.getElementById('geminiConfig').style.display = provider === 'gemini' ? 'block' : 'none';
             document.getElementById('deepseekConfig').style.display = provider === 'deepseek' ? 'block' : 'none';
             document.getElementById('minimaxConfig').style.display = provider === 'minimax' ? 'block' : 'none';
+            switchMiniMaxMode();
             document.getElementById('glmConfig').style.display = provider === 'glm' ? 'block' : 'none';
+            switchGLMMode();
+        }
+
+        // MiniMax：按接口类型显示对应的地址和提示
+        function switchMiniMaxMode() {
+            const modeEl = document.getElementById('minimaxMode');
+            if (!modeEl) return;
+            const key = document.getElementById('minimaxApiKey').value.trim();
+            const plan = modeEl.value === 'tokenplan' || (modeEl.value === 'auto' && (!key || /^sk-cp-/.test(key)));
+            document.getElementById('minimaxPlanEndpointItem').style.display = plan ? 'block' : 'none';
+            document.getElementById('minimaxEndpointItem').style.display = plan ? 'none' : 'block';
+            document.getElementById('minimaxModeHint').textContent = plan
+                ? '当前使用 Token Plan 订阅：填订阅 Key（sk-cp- 开头，在 MiniMax 开放平台「Token Plan」页面获取），走 Anthropic 兼容接口 https://api.minimaxi.com/anthropic，消耗订阅额度。订阅 Key 和按量付费 Key 不通用。'
+                : '当前使用按量付费 API：填普通 API Key，走 OpenAI 兼容接口，按用量扣余额。如果你买的是 Token Plan，请把接口类型选成「Token Plan」。';
+        }
+
+        // 智谱 GLM：Coding Plan 套餐和按量付费用不同的接口
+        function switchGLMMode() {
+            const modeEl = document.getElementById('glmMode');
+            if (!modeEl) return;
+            const coding = modeEl.value !== 'api';
+            document.getElementById('glmCodingEndpointItem').style.display = coding ? 'block' : 'none';
+            document.getElementById('glmEndpointItem').style.display = coding ? 'none' : 'block';
+            document.getElementById('glmModeHint').textContent = coding
+                ? '当前使用 GLM Coding Plan 套餐：走 Anthropic 兼容接口 https://open.bigmodel.cn/api/anthropic（和 Claude Code / cc-switch 的配置一样），消耗套餐额度，模型建议选 GLM-5.2。走普通接口会报「余额不足或无可用资源包」。'
+                : '当前使用按量付费 API：按用量扣账户余额。如果你买的是 GLM Coding Plan，请把接口类型选成「Coding Plan」。';
         }
 
         // 清除自定义风格
