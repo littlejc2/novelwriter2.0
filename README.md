@@ -141,3 +141,18 @@ MIT License - 自由使用和修改
 ---
 
 **开始你的小说创作之旅！** 🚀📚✨
+
+## 🆕 2.0 更新
+
+- **📚 书架**：可以同时写多部小说，每部单独保存设定、世界观、章节和进度，点「续写第N章」即可从最后一章接着写。
+- **📜 原稿工作台**：无限画布浏览全部章节，修改任意一章后可让 AI 重写后续章节；每章保留最近 5 个历史版本。
+- **多模型**：默认 Claude，另支持 Gemini（3.8 Flash / 4 Argon 等）、DeepSeek V4、MiniMax、智谱 GLM。
+- **问题修复**：「修改建议」提交后审核框和批准内容同步更新；无限续写模式可自定义目标章数。
+
+### 三种运行方式
+
+| 方式 | 位置 | 说明 |
+| --- | --- | --- |
+| 本地 Claude Code skill | `skill/novel-writer/` | 解压到 `~/.claude/skills/`，对 Claude 说「打开小说创作系统」；小说保存为本地文件，Claude 可直接修改章节 |
+| Cloudflare Pages | `cloudflare/` | 见 `cloudflare/部署说明.md`，用 `npx wrangler pages deploy` 部署 |
+| 直接打开 | 根目录 `index.html` | 用 `npm start` 或任意静态服务器打开；使用 Gemini 等需要 API Key |
