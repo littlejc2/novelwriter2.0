@@ -57,11 +57,11 @@ class AutoNovelSystem {
             
             // 智谱 GLM 配置
             glmApiKey: localStorage.getItem('glm_api_key') || '',
-            glmModel: 'glm-5.3',
+            glmModel: 'glm-5.2',
             glmEndpoint: 'https://open.bigmodel.cn/api/paas/v4',
             // 接口类型：coding（GLM Coding Plan 套餐）、api（按量付费）
             glmMode: 'coding',
-            glmCodingEndpoint: 'https://open.bigmodel.cn/api/coding/paas/v4',
+            glmCodingEndpoint: 'https://open.bigmodel.cn/api/anthropic',
             
             // 通用配置
             temperature: 0.8,
@@ -1209,12 +1209,19 @@ ${this.getProjectContext()}
                 extra: { reasoning_split: true, max_completion_tokens: 65536 }
             });
         } else if (this.config.provider === 'glm') {
+            if (this.config.glmMode !== 'api') {
+                // Coding Plan 套餐走 Anthropic 兼容接口（和 Claude Code / cc-switch 里的配置一样）
+                return await this.callAnthropicCompatible(prompt, {
+                    name: '智谱GLM Coding Plan',
+                    endpoint: this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/anthropic',
+                    apiKey: this.config.glmApiKey,
+                    model: this.config.glmModel,
+                    maxTokens: 32768
+                });
+            }
             return await this.callOpenAICompatible(prompt, {
-                name: this.config.glmMode === 'api' ? '智谱GLM' : '智谱GLM Coding Plan',
-                // Coding Plan 套餐只能用专属接口，普通接口会报「余额不足或无可用资源包」
-                endpoint: this.config.glmMode === 'api'
-                    ? this.config.glmEndpoint
-                    : (this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/coding/paas/v4'),
+                name: '智谱GLM',
+                endpoint: this.config.glmEndpoint,
                 apiKey: this.config.glmApiKey,
                 model: this.config.glmModel,
                 extra: { max_tokens: 32768 }
@@ -3398,7 +3405,7 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         document.getElementById('minimaxMode').value = this.config.minimaxMode || 'auto';
         document.getElementById('minimaxPlanEndpoint').value = this.config.minimaxPlanEndpoint || 'https://api.minimaxi.com/anthropic';
         document.getElementById('glmMode').value = this.config.glmMode || 'coding';
-        document.getElementById('glmCodingEndpoint').value = this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/coding/paas/v4';
+        document.getElementById('glmCodingEndpoint').value = this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/anthropic';
         
         // 通用设置
         this.autoApproveCheck.checked = this.config.autoApprove;
@@ -3445,7 +3452,7 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         this.config.minimaxMode = document.getElementById('minimaxMode').value;
         this.config.minimaxPlanEndpoint = document.getElementById('minimaxPlanEndpoint').value.trim() || 'https://api.minimaxi.com/anthropic';
         this.config.glmMode = document.getElementById('glmMode').value;
-        this.config.glmCodingEndpoint = document.getElementById('glmCodingEndpoint').value.trim() || 'https://open.bigmodel.cn/api/coding/paas/v4';
+        this.config.glmCodingEndpoint = document.getElementById('glmCodingEndpoint').value.trim() || 'https://open.bigmodel.cn/api/anthropic';
         
         // 保存通用设置
         this.config.autoApprove = this.autoApproveCheck.checked;
@@ -3478,6 +3485,8 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         const geminiOk = ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'];
         if (!geminiOk.includes(this.config.geminiModel)) this.config.geminiModel = 'gemini-3.8-flash';
         if (!['deepseek-v4-pro', 'deepseek-v4-flash'].includes(this.config.deepseekModel)) this.config.deepseekModel = 'deepseek-v4-flash';
+        // GLM Coding Plan 改用 Anthropic 兼容接口
+        if (this.config.glmCodingEndpoint === 'https://open.bigmodel.cn/api/coding/paas/v4') this.config.glmCodingEndpoint = 'https://open.bigmodel.cn/api/anthropic';
         
         // 接入 Claude 后首次加载：默认切换到 Claude
         if (!localStorage.getItem('claude_default_applied')) {
