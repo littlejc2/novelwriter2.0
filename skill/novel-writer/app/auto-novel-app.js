@@ -59,6 +59,9 @@ class AutoNovelSystem {
             glmApiKey: localStorage.getItem('glm_api_key') || '',
             glmModel: 'glm-5.3',
             glmEndpoint: 'https://open.bigmodel.cn/api/paas/v4',
+            // 接口类型：coding（GLM Coding Plan 套餐）、api（按量付费）
+            glmMode: 'coding',
+            glmCodingEndpoint: 'https://open.bigmodel.cn/api/coding/paas/v4',
             
             // 通用配置
             temperature: 0.8,
@@ -1207,8 +1210,11 @@ ${this.getProjectContext()}
             });
         } else if (this.config.provider === 'glm') {
             return await this.callOpenAICompatible(prompt, {
-                name: '智谱GLM',
-                endpoint: this.config.glmEndpoint,
+                name: this.config.glmMode === 'api' ? '智谱GLM' : '智谱GLM Coding Plan',
+                // Coding Plan 套餐只能用专属接口，普通接口会报「余额不足或无可用资源包」
+                endpoint: this.config.glmMode === 'api'
+                    ? this.config.glmEndpoint
+                    : (this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/coding/paas/v4'),
                 apiKey: this.config.glmApiKey,
                 model: this.config.glmModel,
                 extra: { max_tokens: 32768 }
@@ -1318,7 +1324,7 @@ ${this.getProjectContext()}
         const hints = {
             401: 'Key 无效或类型不对',
             403: '没有权限，检查 Key 和接口地址',
-            429: '请求太频繁或额度用完',
+            429: '请求太频繁或额度用完。智谱 Coding Plan 用户请把接口类型选成「Coding Plan」',
             520: '服务器没收到 AI 接口的有效回复，通常是 Key 和接口类型不匹配（MiniMax Token Plan 的 sk-cp- Key 要用 Token Plan 接口），或接口地址填错',
             522: '连接 AI 接口超时',
             524: 'AI 生成太久被中断，可以把每章字数调小再试'
@@ -3391,6 +3397,8 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         });
         document.getElementById('minimaxMode').value = this.config.minimaxMode || 'auto';
         document.getElementById('minimaxPlanEndpoint').value = this.config.minimaxPlanEndpoint || 'https://api.minimaxi.com/anthropic';
+        document.getElementById('glmMode').value = this.config.glmMode || 'coding';
+        document.getElementById('glmCodingEndpoint').value = this.config.glmCodingEndpoint || 'https://open.bigmodel.cn/api/coding/paas/v4';
         
         // 通用设置
         this.autoApproveCheck.checked = this.config.autoApprove;
@@ -3436,6 +3444,8 @@ ${this.project.context.outline ? this.project.context.outline.substring(0, 500) 
         });
         this.config.minimaxMode = document.getElementById('minimaxMode').value;
         this.config.minimaxPlanEndpoint = document.getElementById('minimaxPlanEndpoint').value.trim() || 'https://api.minimaxi.com/anthropic';
+        this.config.glmMode = document.getElementById('glmMode').value;
+        this.config.glmCodingEndpoint = document.getElementById('glmCodingEndpoint').value.trim() || 'https://open.bigmodel.cn/api/coding/paas/v4';
         
         // 保存通用设置
         this.config.autoApprove = this.autoApproveCheck.checked;

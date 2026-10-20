@@ -21,7 +21,8 @@ const PROXY_HOSTS = new Set([
     'api.minimax.cn',
     'api.minimax.io',
     'api.minimaxi.com',
-    'open.bigmodel.cn'
+    'open.bigmodel.cn',
+    'api.z.ai'
 ]);
 
 const CLAUDE_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);

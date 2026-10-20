@@ -1,5 +1,5 @@
 // 转发其他 AI 接口的请求（避免浏览器跨域），流式返回原样交给浏览器；不记录、不保存 Key
-const HOSTS = new Set(['generativelanguage.googleapis.com', 'api.deepseek.com', 'api.minimax.cn', 'api.minimax.io', 'api.minimaxi.com', 'open.bigmodel.cn']);
+const HOSTS = new Set(['generativelanguage.googleapis.com', 'api.deepseek.com', 'api.minimax.cn', 'api.minimax.io', 'api.minimaxi.com', 'open.bigmodel.cn', 'api.z.ai']);
 const PASS_HEADERS = ['authorization', 'x-api-key', 'anthropic-version', 'accept'];
 
 export async function onRequestPost({ request }) {
